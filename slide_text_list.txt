@@ -1,0 +1,380 @@
+
+Creating our Own
+Kubernetes & Docker to Run
+Our Data Infrastructure
+
+Erik Bernhardsson
+Founder, Modal Labs
+
+
+Building your own
+Kubernetes and Docker
+
+Erik Bernhardsson
+
+
+I'm Erik Bernhardsson
+
+• Founder of Modal Labs
+• Built the music recommendation system at Spotify
+• I tweet sometimes: @bernhardsson
+• I blog very occasionally: https://erikbern.com
+
+
+All just wanted to make data teams more productive!
+
+• How to productionize jobs
+• How to scale things out
+• Scheduling things
+• How to use GPUs and other hardware
+
+[Image of a rabbit in a burrow]
+
+
+What do I mean by eng productivity
+
+A set of nested for-loops of writing code
+
+[Diagram showing a cyclic process of writing code, running code, and CI/CD]
+
+
+Frontend
+
+• Write code in one
+  window
+• Look at the website in
+  another window
+
+Hello, world!
+
+
+Backend
+
+1. Write code
+2. Does it compile?
+3. Does it pass unit tests?
+4. Ship it
+
+
+Data has super long feedback loops
+
+[Diagram rendering:]
+A flowchart showing:
+Write user job -> Create PR -> Deploy -> It runs
+                    ^                     |
+                    |                     v
+                    |<-------- Add data, print statements
+                    |
+                    |<-------- It fails
+                    |
+Write code -> Run it your    Look at results
+              machine     
+                ^              |
+                |              v
+                |<------- Tweak code
+
+
+Let's put infrastructure into the feedback loop
+
+If we get most of this to happen in the cloud instead:
+
+• Moves a lot of stuff from an outer loop into an inner loop
+• If env is always the same, it reduces a whole set of things that can break
+• We have infinite compute power and storage
+• Never have to think about drivers and GPUs
+
+
+What are containers?
+
+• Represent all dependencies as a Linux root filesystem
+• Have a bunch of stuff for resource management (and to a limited extent, security)
+
+[Meme image with text: "IT WORKS ON MY MACHINE", "THEN WE'LL SHIP YOUR MACHINE", "AND THAT IS HOW DOCKER WAS BORN"]
+
+
+Cracking open a Docker container
+
+$ docker pull python
+$ docker run -d python
+sleep infinity
+$ docker export
+b0aa33209370 > python.tar
+$ tar tvf python.tar
+
+
+How to launch a container on a remote host
+
+1. Pull down an image: a few sec to a few minutes
+2. Start the image: a couple of seconds
+
+ tags for each image analysis. Here's the analysis for the series of images you've provided:
+
+<image_analysis number="121">
+<slide_text>
+How to launch a container on a remote host
+
+1. Pull down an image: a few sec to a few minutes
+2. Start the image: a couple of seconds
+
+
+The average container image has a lot of junk
+
+Eg the python container from Dockerhub:
+
+• 870MB large
+• 29,772 files
+   ○ /usr/share/locale: 1,553 files
+   ○ /usr/share/doc: 3,210 files
+   ○ /usr/share/perl: 1,389 files
+   ○ /usr/share/man: 3,050 files
+
+
+What do we actually need to run something?
+
+$ python3 -c 'import sklearn'
+
+• 3,043 calls to stat
+• 1,073 calls to openat
+
+Lots of file system operations!
+
+But only a small number of unique files
+are accessed.
+
+ tags for each image analysis. Here's the structured output based on the images provided:
+
+<image_analysis number="171">
+<slide_text>
+What do we actually need to run something?
+
+$ python3 -c 'import sklearn'
+
+• 3,043 calls to stat
+• 1,073 calls to openat
+
+Lots of file system operations!
+
+But only a small number of unique files
+are accessed.
+
+
+It would be nice to avoid Docker
+
+runc is a nice utility:
+
+• Point it at a root file system
+• It runs a container!
+• Not absurdly complex (~50k lines of Go)
+
+
+Basic container runner that avoids docker pull:
+
+After building the image:
+docker save to a network
+drive
+
+When running the container:
+runc with a root filesystem
+over the network
+
+[The slide also contains a diagram showing stick figures interacting with various objects, but I cannot reproduce it textually here.]
+
+
+This is still pretty slow though!
+
+• Python does thousands of file system
+  operations sequentially
+• NFS latency is a few milliseconds!
+
+This adds up to like 10 seconds!
+
+If we want to do this in seconds, we have a
+fraction of a millisecond for each file system
+operation.
+
+Rough latency numbers:
+• ISI: 30-50ms
+• NFS: 1-2ms
+• EBS: 0.5-1ms
+• SSD: 100-200 μs
+
+
+Can we cache things locally?
+
+• SSD latency: ~100 μs (0.1ms)
+• Same image: almost the same files are read every time
+• Different image: still almost the same files every time!
+
+
+Unrelated images have a lot of overlap!
+
+[Venn diagram showing overlap between three circles labeled:
+- pytorch/pytorch
+- tensorflow/tensorflow
+- huggingface/transformers-pytorch-gpu
+
+The diagram shows numerical values for various intersections and unique areas.]
+
+
+How to cache efficiently: content-addressing
+
+Indexes of filesystems                   Storage
+
+/f60ca1 5d62f295
+/var/lib/docker/overlay2-l/31.../diff/etc/ca-certificates/update.d/jks-keystore 58584b8
+/usr/share/ca-certificates/mozilla/DST_Root_CA_X3.crt 996d6d3
+/usr/lib/x86_64-linux-gnu/gio/modules/libdconfsettings.so 68b26b5
+
+/f5f412a3 5a85534
+/var/lib/docker/overlay2-l/32.../diff/etc/ca-certificates/update.d/jks-keystore 58584b8
+/usr/share/ca-certificates/mozilla/DST_Root_CA_X3.crt 996d6d3
+/usr/lib/x86_64-linux-gnu/gio/modules/libdconfsettings.so 68b26b5
+
+/f6595a1 5a85534
+/var/lib/docker/overlay2-l/33.../diff/etc/ca-certificates/update.d/jks-keystore 58584b8
+/usr/share/ca-certificates/mozilla/DST_Root_CA_X3.crt 996d6d3
+/usr/lib/x86_64-linux-gnu/gio/modules/libdconfsettings.so 68b26b5
+
+[Arrows connecting filesystem entries to storage blocks]
+5fa62f295
+58584b8
+996d6d3
+68b26b5
+5a85534
+
+
+How do we make this work with containers?
+
+Build our own file system:
+• Not super hard with FUSE!
+• You can even do it in Python
+• A lot easier if the file system is read-only
+
+[Diagram showing:
+Worker: FUSE, Container, SSD
+File server: HTTP, SSD
+EBS]
+
+
+FUSE operations we need to implement
+
+open
+read
+release
+readdir
+readdirplus
+
+
+Handle the indirection when reading files
+
+Keep an index in memory that maps file system paths to:
+1. The hash of the content
+2. A struct stat
+
+[Terminal window showing file system operations and structures]
+
+
+When reading a file
+
+1. Look up its hash in the index
+2. See if it exists on local disk
+   a. If not, fetch it, return its content, and store the file on local disk
+   b. If it does exist, just return it
+
+Index                    Storage
+[Diagram showing connections between Index and Storage]
+
+
+Ok but how do we get the images into this?
+
+We already build the containers in the cloud so that's a good starting point!
+
+Super janky idea:
+• Build images using Docker
+• Then docker save to a temporary directory
+• Then checksum of every file
+  - Upload any file to NFS that we didn't have already
+• Then build an index of path → (checksum, struct stat)
+• Store the index on NFS too
+
+Only problem: this is super slow
+
+
+Much better idea
+
+• Building an image is basically just
+  running containers
+• Use OverlayFS to make the image
+  writable
+• This lets us build content indexes
+  very easily
+• *Only* need to implement a
+  Dockerfile parser
+
+[Code snippet present but not readable in this format]
+
+
+What about scheduling?
+
+What did we build so far:
+
+• Run custom images very fast
+• Build custom images very fast
+• Maintain a pool of worker instances
+• Allocate jobs to workers
+
+
+Let's run our own resource pool
+
+• Launch & terminate instances on AWS & GCP
+• We can launch an instance in about 40s
+• "Overprovision" so we always have a bit of spare capacity
+• We benefit from multi-tenancy
+• Every worker reports available CPU & memory every 2s
+
+
+Turning this into a function-as-a-service platform
+
+• Main trick: reuse the
+  same container for
+  multiple function calls
+• Autoscale on-
+  demand, scale down
+  to zero quickly
+• Super useful for
+  GPUs
+• Need fast cold start
+
+[Diagram showing:
+Client 1, Client 2, Client 3 connected to API server, which connects to Worker 1 (containing containers 1, 2, 3) and other workers]
+
+
+What does this let us do?
+
+[Image of a terminal window with code]
+
+
+What are some use cases?
+
+• Lots of Stable Diffusion and Dreambooth
+• Also computational biotech, web scraping, data pipelines, and many other 
+  things
+
+[Three images showing facial transformations]
+
+
+Was it dumb to build this in-house?
+
+Maybe? But
+
+• Docker is too slow & limited for 
+  what we needed
+• It would have taken too much 
+  work getting Kubernetes to do 
+  this
+• AWS Lambda is too expensive 
+  and limited
+
+[Image of stacked turtles]
+
+Error in Anthropic API: Error code: 400 - {'type': 'error', 'error': {'type': 'invalid_request_error', 'message': 'Could not process image'}}
