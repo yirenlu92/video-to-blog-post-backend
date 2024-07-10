@@ -67,8 +67,6 @@ def transcribe_and_edit(
     # Make call to Assembly AI to transcribe with speaker labels and
     import assemblyai as aai
 
-    aai.settings.api_key = "ce641a9e945b492f9791ef6b20f2274e"
-
     transcriber = aai.Transcriber()
 
     config = aai.TranscriptionConfig(speaker_labels=True)
@@ -142,9 +140,6 @@ def transcribe_and_edit(
     # return the edited transcript
     return "\n\n".join(edited_for_clarity_output)
 
-
-# OpenAI API Key
-api_key = "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"
 
 schema_example = """
 {
