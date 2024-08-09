@@ -1,9 +1,19 @@
-import os
 from modal import Image, App, Secret, Function, asgi_app
 from modal.functions import FunctionCall
 from pydantic import BaseModel
 from pprint import pprint
-
+from utils import (
+    extract_markdown,
+    extract_blog_post_section,
+    extract_batch_and_count,
+    extract_slide_text,
+    slides_are_the_same,
+    remove_duplicates_preserve_order,
+)
+from youtube import YoutubeVideo
+from r2_utils import upload_file_to_r2
+from assemblyai_utils import transcribe_with_assembly
+import os
 
 import fastapi
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,225 +78,10 @@ def fastapi_app():
     return web_app
 
 
-def extract_markdown(text):
-    import re
-
-    # Define the regex pattern to capture the content between <edited_transcript> and </edited_transcript>
-    pattern = r"<markdown>(.*?)</markdown>"
-
-    # Use re.findall to find all occurrences of the pattern
-    results = re.findall(pattern, text, re.DOTALL)
-
-    # Check if any results were found
-    if results:
-        return results[0]
-    else:
-        return text
-
-
-def extract_blog_post_section(text):
-    import re
-
-    # Define the regex pattern to capture the content between <edited_transcript> and </edited_transcript>
-    pattern = r"<blog_post_section>(.*?)</blog_post_section>"
-
-    # Use re.findall to find all occurrences of the pattern
-    results = re.findall(pattern, text, re.DOTALL)
-
-    # Check if any results were found
-    if results:
-        return results[0]
-    else:
-        return text
-
-
-def remove_duplicates_preserve_order(input_list):
-    result = []
-
-    prev_item = ""
-    for index, full_item in enumerate(input_list):
-        print("full_item: ", full_item)
-        (i, item, start, end) = full_item
-
-        if slides_are_the_same(item.lower(), prev_item.lower()):
-            print("this slide is the same as the previous one!")
-            continue
-
-        result.append(full_item)
-    return result
-
-
-def extract_batch_and_count(image_url):
-    # extract the batch and count number from the image_url
-    import re
-
-    pattern = r"slide_batch_(\d+)_count_(\d+).png"
-
-    # Use re.findall to find all occurrences of the pattern
-    results = re.findall(pattern, image_url, re.DOTALL)
-
-    # Check if any results were found
-    if results:
-        return results[0]
-    else:
-        return None
-
-
-def extract_slide_text(text):
-    import re
-
-    pattern = r'<image_analysis id="([\w-]+)">\s*<slide_text>\s*([\s\S]*?)\s*</slide_text>\s*</image_analysis>'
-
-    # # Define the regex pattern to capture the content between <edited_transcript> and </edited_transcript>
-    # pattern = r"<slide_text>(.*?)</slide_text>"
-
-    # Use re.findall to find all occurrences of the pattern
-    results = re.findall(pattern, text, re.DOTALL)
-
-    # Check if any results were found
-    if results:
-        for result in results:
-            image_id, slide_text = result
-            yield (image_id, slide_text)
-        # return results
-    else:
-        return [text]
-
-
 @app.function(timeout=6000, secrets=[Secret.from_name("r2-secret")])
 def upload_multiple_files_to_r2(file_paths):
     for file_path in file_paths:
         upload_file_to_r2(file_path)
-
-
-def upload_file_to_r2(file_path):
-    import boto3
-
-    # # Load credentials from the JSON file
-    # with open("credentials.json") as f:
-    #     credentials = json.load(f)
-
-    # Extract credentials
-    aws_access_key_id = os.environ.get("AWS_ACCESS_KEY_ID")
-    aws_secret_access_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-
-    s3 = boto3.client(
-        service_name="s3",
-        endpoint_url="https://36cc38112bef9dac3e0dce835950cd6e.r2.cloudflarestorage.com",
-        aws_access_key_id=aws_access_key_id,
-        aws_secret_access_key=aws_secret_access_key,
-        region_name="auto",  # Must be one of: wnam, enam, weur, eeur, apac, auto
-    )
-
-    # Upload/Update single file
-    s3.upload_file(
-        file_path,
-        Bucket="video-to-blog-post-uploads",
-        Key=file_path,
-    )
-
-    # get the public url from r2
-    public_url = f"https://pub-f1ee73dd9450494a95fae11b75fb5a42.r2.dev/{file_path}"
-
-    print(f"public_url: {public_url}")
-    return public_url
-
-
-class YoutubeVideo:
-    def __init__(self, url):
-        self.url = url
-
-    def get_title(self):
-        import yt_dlp
-
-        ydl_opts = {
-            "quiet": True,  # Suppress verbose output
-            "skip_download": True,  # Skip the actual download
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # Extract information without downloading
-            info_dict = ydl.extract_info(self.url, download=False)
-
-            # Get the title
-            title = info_dict.get("title", None)
-
-        self.title = title
-        return title
-
-    def download_youtube_video(self):
-        import yt_dlp
-        import re
-        from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
-        from moviepy.editor import VideoFileClip
-
-        # lower-case the title of the youtube video, remove punctuation and replace spaces with underscores
-        file_name = re.sub(r"[^\w\s]", "", self.title.lower()).replace(" ", "_")
-
-        ydl_opts = {
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4",  # Ensure the format is mp4
-            "outtmpl": f"{file_name}.mp4",
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(self.url, download=True)
-            downloaded_file = ydl.prepare_filename(info_dict)
-
-        # Print the info_dict to see all information provided by yt_dlp
-        print(f"Info dict: {info_dict}")
-
-        print(f"Expected downloaded file: {downloaded_file}")
-
-        # List all files in the current directory to see if the file is present
-        print("Files in the current directory:", os.listdir("."))
-
-        # Check if the file exists
-        if not os.path.exists(downloaded_file):
-            raise FileNotFoundError(f"File not found: {downloaded_file}")
-
-        # upload the whole file to s3
-        whole_video_file_url = upload_file_to_r2(downloaded_file)
-
-        # get the public url from r2
-
-        # Load the video file
-        video = VideoFileClip(downloaded_file)
-        duration = video.duration  # duration in seconds
-
-        # Split the video into chunks of 5 minutes (300 seconds)
-        chunk_duration = 300
-        start_time = 0
-        chunk_number = 1
-
-        audio_urls = []
-
-        while start_time < duration:
-            end_time = min(start_time + chunk_duration, duration)
-            chunk_file_name = f"{file_name}_chunk_{chunk_number}.mp4"
-
-            ffmpeg_extract_subclip(
-                downloaded_file, start_time, end_time, targetname=chunk_file_name
-            )
-
-            # Check if the chunk file exists
-            if not os.path.exists(chunk_file_name):
-                raise FileNotFoundError(f"Chunk file not found: {chunk_file_name}")
-
-            # Upload the chunk to R2
-            audio_url = upload_file_to_r2(chunk_file_name)
-            audio_urls.append(audio_url)
-
-            # Remove the chunk file after upload to save space
-            os.remove(chunk_file_name)
-
-            start_time += chunk_duration
-            chunk_number += 1
-
-        # Remove the original downloaded file to save space
-        os.remove(downloaded_file)
-
-        print("after upload file to s3")
-        return whole_video_file_url, audio_urls
 
 
 @app.function(timeout=6000, secrets=[Secret.from_name("video-to-tutorial-keys")])
@@ -512,63 +307,6 @@ Remember to maintain the exact order of the image numbering in your analysis and
         return f"Error in Anthropic API: {e}"
 
 
-# Function to preprocess text
-def preprocess_text(text):
-    import re
-
-    # Convert to lowercase
-    text = text.lower()
-    # Remove non-alphanumeric characters
-    text = re.sub(r"\W+", " ", text)
-    return text
-
-
-# Function to extract text from an image using pytesseract
-def extract_text_from_image(image):
-    import pytesseract
-
-    return pytesseract.image_to_string(image)
-
-
-# Function to compute cosine similarity between two texts
-def compute_similarity(text1, text2):
-    from sklearn.feature_extraction.text import CountVectorizer
-    from sklearn.metrics.pairwise import cosine_similarity
-
-    # Preprocess the texts
-    text1 = preprocess_text(text1)
-    text2 = preprocess_text(text2)
-
-    # Create a CountVectorizer to count token occurrences
-    vectorizer = CountVectorizer().fit_transform([text1, text2])
-    vectors = vectorizer.toarray()
-
-    # Compute cosine similarity
-    cosine_sim = cosine_similarity(vectors)
-
-    # Cosine similarity between the two texts
-    return cosine_sim[0, 1]
-
-
-def slides_are_the_same(text1, text2):
-    # Compute similarity between the texts
-    similarity = compute_similarity(text1, text2)
-
-    # Define a threshold for similarity to consider the texts as the same slide
-    threshold = 0.8
-
-    if similarity >= threshold:
-        print(f"text1: {text1}")
-        print(f"text2: {text2}")
-        print("The frames contain the same slide.")
-        return True
-    else:
-        print(f"text1: {text1}")
-        print(f"text2: {text2}")
-        print("The frames contain different slides.")
-        return False
-
-
 @app.function(timeout=6000, secrets=[Secret.from_name("video-to-tutorial-keys")])
 def write_section(paragraphs, slide_text_list_elem, all_output_folders):
     from openai import OpenAI
@@ -642,46 +380,7 @@ Remember to maintain the original speaking style while improving readability and
         return f"Error in OpenAI API: {e}"
 
 
-def get_sentences_timestamps_from_transcript(transcript_id):
-    import requests
-
-    url = f"https://api.assemblyai.com/v2/transcript/{transcript_id}/sentences"
-    headers = {"Authorization": os.environ.get("ASSEMBLYAI_API_KEY")}
-
-    response = requests.get(url, headers=headers)
-
-    if response.status_code == 200:
-        return response.json()
-    else:
-        response.raise_for_status()
-
-
-def transcribe_with_assembly(
-    audio_url=None,
-):
-    import os
-
-    # Make call to Assembly AI to transcribe with speaker labels and
-    import assemblyai as aai
-
-    aai.settings.api_key = os.environ.get("ASSEMBLYAI_API_KEY")
-
-    transcriber = aai.Transcriber()
-
-    config = aai.TranscriptionConfig(speaker_labels=True)
-
-    transcript = transcriber.transcribe(audio_url, config)
-
-    id = transcript.id
-
-    sentences = get_sentences_timestamps_from_transcript(id)
-
-    return sentences["sentences"]
-
-
 def ensure_directory_exists(file_path):
-    import os
-
     # Extract the directory path
     directory = os.path.dirname(file_path)
     # Create the directory if it does not exist
