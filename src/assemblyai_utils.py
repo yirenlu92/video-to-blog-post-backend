@@ -1,9 +1,9 @@
 import os
+import requests
+import assemblyai as aai
 
 
 def get_sentences_timestamps_from_transcript(transcript_id):
-    import requests
-
     url = f"https://api.assemblyai.com/v2/transcript/{transcript_id}/sentences"
     headers = {"Authorization": os.environ.get("ASSEMBLYAI_API_KEY")}
 
@@ -18,10 +18,7 @@ def get_sentences_timestamps_from_transcript(transcript_id):
 def transcribe_with_assembly(
     audio_url=None,
 ):
-    import os
-
     # Make call to Assembly AI to transcribe with speaker labels and
-    import assemblyai as aai
 
     aai.settings.api_key = os.environ.get("ASSEMBLYAI_API_KEY")
 

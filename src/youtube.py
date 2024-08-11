@@ -1,5 +1,6 @@
-from r2_utils import upload_file_to_r2
 import os
+import yt_dlp
+import re
 
 
 class YoutubeVideo:
@@ -7,8 +8,6 @@ class YoutubeVideo:
         self.url = url
 
     def get_title(self):
-        import yt_dlp
-
         ydl_opts = {
             "quiet": True,  # Suppress verbose output
             "skip_download": True,  # Skip the actual download
@@ -26,9 +25,10 @@ class YoutubeVideo:
 
     def download_youtube_video(self):
         import yt_dlp
-        import re
+
         from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
         from moviepy.editor import VideoFileClip
+        from r2_utils import upload_file_to_r2
 
         # lower-case the title of the youtube video, remove punctuation and replace spaces with underscores
         file_name = re.sub(r"[^\w\s]", "", self.title.lower()).replace(" ", "_")
@@ -36,6 +36,7 @@ class YoutubeVideo:
         ydl_opts = {
             "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/mp4",  # Ensure the format is mp4
             "outtmpl": f"{file_name}.mp4",
+            "skip_download": True,  # Skip the actual download
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

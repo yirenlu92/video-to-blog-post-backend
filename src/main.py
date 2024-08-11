@@ -1,29 +1,23 @@
-from modal import Image, App, Secret, Function, asgi_app
-from modal.functions import FunctionCall
-from pydantic import BaseModel
+from modal import Secret, Function, Image, App
 from pprint import pprint
-from utils import (
-    extract_markdown,
-    extract_blog_post_section,
+
+from .helper import (
     extract_batch_and_count,
-    extract_slide_text,
+    ocr_with_pytesseract,
     slides_are_the_same,
+    extract_blog_post_section,
+    ensure_directory_exists,
+    extract_markdown,
+    extract_slide_text,
     remove_duplicates_preserve_order,
 )
-from youtube import YoutubeVideo
-from r2_utils import upload_file_to_r2
-from assemblyai_utils import transcribe_with_assembly
-import os
 
-import fastapi
-from fastapi.middleware.cors import CORSMiddleware
+from .r2_utils import upload_file_to_r2, download_file_from_url
+from .assemblyai_utils import transcribe_with_assembly
+
 
 import cv2
 import argparse
-
-
-class YouTubeRequest(BaseModel):
-    youtube_url: str
 
 
 image = (
@@ -37,10 +31,8 @@ image = (
         "requests",
         "pyjwt",
         "boto3",
-        "pyairtable",
         "opencv-python",
         "numpy",
-        "openai",
         "assemblyai",
         "anthropic",
         "pybase64",
@@ -49,39 +41,11 @@ image = (
         "pytesseract",
         "Pillow",
         "ffmpeg-python",
-        "scikit-learn",
+        "openai",
     )
 )
 
 app = App("video-to-blog-post", image=image)
-
-web_app = fastapi.FastAPI()
-
-origins = [
-    "http://localhost:5173",
-    "https://video-to-blog-post-frontend.onrender.com",
-    # Add other origins you want to allow
-]
-
-web_app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,  # List of allowed origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allow all HTTP methods
-    allow_headers=["*"],  # Allow all headers
-)
-
-
-@app.function()
-@asgi_app()
-def fastapi_app():
-    return web_app
-
-
-@app.function(timeout=6000, secrets=[Secret.from_name("r2-secret")])
-def upload_multiple_files_to_r2(file_paths):
-    for file_path in file_paths:
-        upload_file_to_r2(file_path)
 
 
 @app.function(timeout=6000, secrets=[Secret.from_name("video-to-tutorial-keys")])
@@ -194,120 +158,6 @@ Remember to maintain ordering of the images in your analysis (ascending by batch
 
 
 @app.function(timeout=6000, secrets=[Secret.from_name("video-to-tutorial-keys")])
-def read_text_from_slides_with_anthropic(image_urls):
-    # get the base64 string for each image
-    import base64
-    import httpx
-
-    import anthropic
-
-    image_text_prompt = """
-You are an AI assistant tasked with analyzing a series of images containing presentation slides. Your job is to extract and structure the text from these slides, as well as render any diagrams present. Follow these instructions carefully for each image:
-
-For each image, numbered in ascending order, please do the following:
-
-1. Perform Optical Character Recognition (OCR) on the text in the slide portion of the image. Ignore any text in other sections of the image, such as titles or parts showing the speaker.
-
-2. Structure the OCR'ed text to resemble its appearance on the slide as closely as possible. Present this text within <slide_text> tags.
-
-3. If the slide contains any diagrams, render them as best you can in ascii art. Include any labels or annotations present in the diagram.
-
-4. Output the results for each slide in ascending order based on the image numbers. Format your output as follows:
-
-<image_analysis id="[Insert image id here]">
-<slide_text>
-[Insert structured OCR'ed text here]
-</slide_text>
-
-</image_analysis>
-
-<image_analysis id="[Insert image id here]">
-<slide_text>
-[Insert structured OCR'ed text here]
-</slide_text>
-</image_analysis>
-
-[Continue for all images in the set]
-
-So if the image id is batch_0_count_2, then the output should look something like this:
-
-<image_analysis id="batch_0_count_2">
-<slide_text>
-Title of Slide
-
-• Bullet point 1
-• Bullet point 2
-
-Additional text on the slide
-</slide_text>
-</image_analysis>
-
-Example of how to structure the OCR'ed text:
-
-<slide_text>
-Title of Slide
-
-• Bullet point 1
-• Bullet point 2
-   - Sub-bullet point A
-   - Sub-bullet point B
-• Bullet point 3
-
-Additional text on the slide
-</slide_text>
-
-
-Remember to maintain the exact order of the image numbering in your analysis and to include all relevant information from each slide.
-    """
-
-    client = anthropic.Anthropic()
-
-    messages = [
-        {
-            "role": "user",
-            "content": [],
-        }
-    ]
-
-    for image_url in image_urls:
-        # extract the batch and count number from the image_url
-        batch_and_count = extract_batch_and_count(image_url)
-        image_data = base64.b64encode(httpx.get(image_url).content).decode("utf-8")
-        image_media_type = "image/png"
-
-        messages[0]["content"].append(
-            {
-                "type": "text",
-                "text": f"Image id: batch_{batch_and_count[0]}_count_{batch_and_count[1]}:",
-            },
-        )
-        messages[0]["content"].append(
-            {
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": image_media_type,
-                    "data": image_data,
-                },
-            }
-        )
-
-    messages[0]["content"].append({"type": "text", "text": image_text_prompt})
-
-    try:
-        message = client.messages.create(
-            model="claude-3-5-sonnet-20240620", max_tokens=2000, messages=messages
-        )
-        print("results from anthropic")
-        print(message.content[0].text)
-        return message.content[0].text
-
-    except Exception as e:
-        print(f"Error in Anthropic API: {e}")
-        return f"Error in Anthropic API: {e}"
-
-
-@app.function(timeout=6000, secrets=[Secret.from_name("video-to-tutorial-keys")])
 def write_section(paragraphs, slide_text_list_elem, all_output_folders):
     from openai import OpenAI
 
@@ -380,29 +230,6 @@ Remember to maintain the original speaking style while improving readability and
         return f"Error in OpenAI API: {e}"
 
 
-def ensure_directory_exists(file_path):
-    # Extract the directory path
-    directory = os.path.dirname(file_path)
-    # Create the directory if it does not exist
-    if not os.path.exists(directory):
-        os.makedirs(directory)
-
-        # create a subdirectory /slides
-        os.makedirs(f"{directory}/slides")
-
-
-def ocr_with_pytesseract(image_path):
-    from PIL import Image
-    import pytesseract
-
-    # Load images
-    image = Image.open(image_path)
-
-    # Extract text
-    text = pytesseract.image_to_string(image)
-    return text
-
-
 @app.function(
     timeout=6000,
     secrets=[
@@ -461,14 +288,6 @@ def save_slides_from_video(batch_number, video_path, frame_interval=300, thresho
 
         # if this is not the first frame, compare it to the previous frame
         if prev_frame is not None:
-            # # Calculate the difference between frames
-            # diff = cv2.absdiff(current_frame, prev_frame)
-            # non_zero_count = np.count_nonzero(diff)
-
-            # # If difference is significant, it's a new slide
-            # if non_zero_count > threshold * diff.size:
-            # Record the timestamp of the slide
-
             # get the slide_path
             slide_path = f"{output_folder}/slides/slide_batch_{batch_number}_count_{slide_count}.png"
 
@@ -572,6 +391,58 @@ Here are the sections:
     return extract_markdown(response.choices[0].message.content)
 
 
+def download_file_and_split_into_chunks(video_url):
+    from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
+    from moviepy.editor import VideoFileClip
+    import os
+
+    # download the file
+    local_file_path = "temp_file.mp4"
+    download_file_from_url(video_url, local_file_path)
+
+    # get file name from public_url
+    file_name = video_url.split("/")[-1].split(".")[0]
+
+    # Load the video file
+    video = VideoFileClip(local_file_path)
+    duration = video.duration  # duration in seconds
+
+    # Split the video into chunks of 5 minutes (300 seconds)
+    chunk_duration = 300
+    start_time = 0
+    chunk_number = 1
+
+    audio_urls = []
+
+    while start_time < duration:
+        end_time = min(start_time + chunk_duration, duration)
+        chunk_file_name = f"{file_name}_chunk_{chunk_number}.mp4"
+
+        ffmpeg_extract_subclip(
+            local_file_path, start_time, end_time, targetname=chunk_file_name
+        )
+
+        # Check if the chunk file exists
+        if not os.path.exists(chunk_file_name):
+            raise FileNotFoundError(f"Chunk file not found: {chunk_file_name}")
+
+        # Upload the chunk to R2
+        audio_url = upload_file_to_r2(chunk_file_name)
+        audio_urls.append(audio_url)
+
+        # Remove the chunk file after upload to save space
+        os.remove(chunk_file_name)
+
+        start_time += chunk_duration
+        chunk_number += 1
+
+    # Remove the original downloaded file to save space
+    os.remove(local_file_path)
+
+    print("after upload file to s3")
+    return video_url, audio_urls
+
+
 @app.function(
     timeout=6000,
     secrets=[
@@ -579,16 +450,19 @@ Here are the sections:
         Secret.from_name("r2-secret"),
     ],
 )
-def create_video_to_post(youtube_url):
+def create_video_to_post(video_r2_url):
     import time
 
-    # get the youtube video and other assorted metadata
-    video = YoutubeVideo(youtube_url)
+    # download the video from r2
+    whole_video_url, video_urls = download_file_and_split_into_chunks(video_r2_url)
 
-    video.get_title()
+    # # get the youtube video and other assorted metadata
+    # video = YoutubeVideo(youtube_url)
 
-    # download the youtube video
-    whole_video_url, video_urls = video.download_youtube_video()
+    # video.get_title()
+
+    # # download the youtube video
+    # whole_video_url, video_urls = video.download_youtube_video()
 
     # get the video_url
     print(video_urls)
@@ -772,27 +646,6 @@ def create_video_to_post(youtube_url):
         written_sections.append(section)
 
     return "\n\n".join(written_sections)
-
-
-@web_app.post("/accept")
-def accept_create_video_to_post_job(request: YouTubeRequest):
-    # get the youtube url from the request body
-    youtube_url = request.youtube_url
-
-    call = create_video_to_post.spawn(youtube_url)
-    return {"call_id": call.object_id}
-
-
-@web_app.get("/result/{call_id}")
-async def poll_results(call_id: str):
-    function_call = FunctionCall.from_id(call_id)
-    try:
-        # return as { "result": { "markdown": function_call.get(timeout=0)} }
-        result = function_call.get(timeout=0)
-        print("result:", result)
-        return {"markdown": result}
-    except TimeoutError:
-        return fastapi.responses.JSONResponse({"status": "pending"}, status_code=202)
 
 
 def main():
