@@ -297,6 +297,10 @@ def save_slides_from_video(batch_number, video_path, frame_interval=300, thresho
             # ocr the slide with pytesseract
             slide_text = ocr_with_pytesseract(slide_path)
 
+            # print the slide_text
+            print("slide_text:")
+            print(slide_text)
+
             # update current_slide_text
             if slides_are_the_same(slide_text.lower(), prev_slide_text.lower()):
                 prev_slide_text = slide_text
