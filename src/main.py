@@ -1,5 +1,6 @@
 from modal import Secret, Function, Image, App
 from pprint import pprint
+import argparse
 
 from .helper import (
     extract_batch_and_count,
@@ -14,10 +15,6 @@ from .helper import (
 
 from .r2_utils import upload_file_to_r2, download_file_from_url
 from .assemblyai_utils import transcribe_with_assembly
-
-
-import cv2
-import argparse
 
 
 image = (
@@ -238,6 +235,8 @@ Remember to maintain the original speaking style while improving readability and
     ],
 )
 def save_slides_from_video(batch_number, video_path, frame_interval=300, threshold=0.1):
+    import cv2
+
     # name of output folder should be human readable version of video file name
     output_folder = video_path.split("/")[-1].split(".")[0]
 
