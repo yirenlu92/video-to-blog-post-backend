@@ -1,8 +1,5 @@
-import pytesseract
-
 # from sklearn.feature_extraction.text import CountVectorizer
 # from sklearn.metrics.pairwise import cosine_similarity
-from PIL import Image
 import os
 import re
 
@@ -18,6 +15,8 @@ def preprocess_text(text):
 
 # Function to extract text from an image using pytesseract
 def extract_text_from_image(image):
+    import pytesseract
+
     return pytesseract.image_to_string(image)
 
 
@@ -75,6 +74,9 @@ def remove_duplicates_preserve_order(input_list):
 
 
 def ocr_with_pytesseract(image_path):
+    import pytesseract
+    from PIL import Image
+
     # Load images
     image = Image.open(image_path)
 
