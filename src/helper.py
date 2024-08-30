@@ -20,41 +20,56 @@ def extract_text_from_image(image):
     return pytesseract.image_to_string(image)
 
 
-# # Function to compute cosine similarity between two texts
-# def compute_similarity(text1, text2):
-#     # Preprocess the texts
-#     text1 = preprocess_text(text1)
-#     text2 = preprocess_text(text2)
+def get_token_dict(tokens):
+    from collections import Counter
 
-#     # Create a CountVectorizer to count token occurrences
-#     vectorizer = CountVectorizer().fit_transform([text1, text2])
-#     vectors = vectorizer.toarray()
+    # Create a dictionary of token frequencies
+    return Counter(tokens)
 
-#     # Compute cosine similarity
-#     cosine_sim = cosine_similarity(vectors)
 
-#     # Cosine similarity between the two texts
-#     return cosine_sim[0, 1]
+def jaccard_similarity(dict1, dict2):
+    # Convert the dictionaries to sets of tokens
+    set1 = set(dict1.keys())
+    set2 = set(dict2.keys())
+
+    # Calculate Jaccard similarity
+    intersection = len(set1 & set2)
+    union = len(set1 | set2)
+
+    # Handle the case where the union is 0
+    if union == 0:
+        return 0.0
+
+    return intersection / union
+
+
+def tokenize_no_whitespace(text):
+    import re
+
+    # Remove all whitespace characters (spaces, tabs, newlines, etc.)
+    text_no_whitespace = re.sub(r"\s+", "", text.lower())
+    # Tokenize by individual characters
+    tokens = list(text_no_whitespace)
+    return tokens
 
 
 def slides_are_the_same(text1, text2):
-    return text1 == text2
-    # # Compute similarity between the texts
-    # similarity = compute_similarity(text1, text2)
+    threshold = 0.9
 
-    # # Define a threshold for similarity to consider the texts as the same slide
-    # threshold = 0.8
+    # Tokenizing by character
+    tokens1_char = tokenize_no_whitespace(text1)
+    tokens2_char = tokenize_no_whitespace(text2)
 
-    # if similarity >= threshold:
-    #     print(f"text1: {text1}")
-    #     print(f"text2: {text2}")
-    #     print("The frames contain the same slide.")
-    #     return True
-    # else:
-    #     print(f"text1: {text1}")
-    #     print(f"text2: {text2}")
-    #     print("The frames contain different slides.")
-    #     return False
+    dict1_char = get_token_dict(tokens1_char)
+    dict2_char = get_token_dict(tokens2_char)
+
+    # Calculating Jaccard similarity for character tokens
+    jaccard_sim_char = jaccard_similarity(dict1_char, dict2_char)
+
+    if jaccard_sim_char >= threshold:
+        return True
+
+    return False
 
 
 def remove_duplicates_preserve_order(input_list):
@@ -67,9 +82,11 @@ def remove_duplicates_preserve_order(input_list):
 
         if slides_are_the_same(item.lower(), prev_item.lower()):
             print("this slide is the same as the previous one!")
+            prev_item = item
             continue
 
         result.append(full_item)
+        prev_item = item
     return result
 
 

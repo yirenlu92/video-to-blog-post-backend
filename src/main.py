@@ -6,8 +6,8 @@ from .helper import (
     extract_batch_and_count,
     ocr_with_pytesseract,
     slides_are_the_same,
-    extract_blog_post_section,
     ensure_directory_exists,
+    extract_blog_post_section,
     extract_markdown,
     extract_slide_text,
     remove_duplicates_preserve_order,
@@ -155,7 +155,7 @@ Remember to maintain ordering of the images in your analysis (ascending by batch
 
 
 @app.function(timeout=6000, secrets=[Secret.from_name("video-to-tutorial-keys")])
-def write_section(paragraphs, slide_text_list_elem, all_output_folders):
+def write_section(paragraphs, slide_text_list_elem, subdirectory_name):
     from openai import OpenAI
 
     slide_id, slide_text, start, end = slide_text_list_elem
@@ -163,10 +163,7 @@ def write_section(paragraphs, slide_text_list_elem, all_output_folders):
     # extract the batch_number from the slide_id
     batch_number = int(slide_id.split("_")[1])
 
-    print("all_output_folders")
-    print(all_output_folders)
-
-    slide_image_url = f"https://pub-f1ee73dd9450494a95fae11b75fb5a42.r2.dev/{all_output_folders[batch_number]}/slides/slide_{slide_id}.png"
+    slide_image_url = f"https://pub-f1ee73dd9450494a95fae11b75fb5a42.r2.dev/{subdirectory_name}/batch_{batch_number}/slides/slide_{slide_id}.png"
 
     client = OpenAI()
 
@@ -198,14 +195,11 @@ Your task is to lightly edit the transcript for clarity while preserving the fir
 4. Use the slide title as the subheading for the section, in H2 format and sentence case.
 5. Incorporate information from the slide text, including verbatim text when appropriate (lists, diagrams, code samples, or images).
 
-Format the blog post section as follows:
+Output the following, in <blog_post_section> tags, in Markdown:
 
-1. Start with the subheading (H2, sentence case).
-2. Include the slide image in markdown format.
-3. Add the raw transcript text in italics, using markdown format.
-4. Present the lightly edited transcript text in markdown format.
-
-Output the entire section in markdown format, enclosed in <blog_post_section> tags.
+1. The subheading (H2, sentence case).
+2. The slide image in markdown format.
+4. The lightly edited transcript text, in Markdown format
 
 Remember to maintain the original speaking style while improving readability and clarity. Your goal is to create a polished, engaging, and informative blog post section that accurately represents the content of the talk.
 """
@@ -236,9 +230,12 @@ Remember to maintain the original speaking style while improving readability and
 )
 def save_slides_from_video(batch_number, video_path, frame_interval=300, threshold=0.1):
     import cv2
+    import os
 
-    # name of output folder should be human readable version of video file name
-    output_folder = video_path.split("/")[-1].split(".")[0]
+    # name of output folder should be human readable version of video file name, with dashes instead of spaces
+    subdirectory_name = video_path.split("/")[-3]
+
+    print("subdirectory_name:", subdirectory_name)
 
     # Open the video file
     cap = cv2.VideoCapture(video_path)
@@ -263,7 +260,7 @@ def save_slides_from_video(batch_number, video_path, frame_interval=300, thresho
     slide_path = ""
     image_urls = []
 
-    ensure_directory_exists(f"{output_folder}/slides")
+    os.makedirs(f"{subdirectory_name}/batch_{batch_number}/slides", exist_ok=True)
 
     prev_slide_text = ""
 
@@ -279,16 +276,21 @@ def save_slides_from_video(batch_number, video_path, frame_interval=300, thresho
         # if this is the first frame, save it as the first slide
         if prev_frame is None:
             # save the first frame
-            slide_path = f"{output_folder}/slides/slide_batch_{batch_number}_count_{slide_count}.png"
+            slide_path = f"{subdirectory_name}/batch_{batch_number}/slides/slide_batch_{batch_number}_count_{slide_count}.png"
             cv2.imwrite(slide_path, current_frame)
             print(f"Slide {slide_count} saved.")
 
             image_url = upload_file_to_r2(slide_path)
+            image_urls.append(image_url)
+
+            prev_slide_text = ocr_with_pytesseract(slide_path)
+
+            slide_count += 1
 
         # if this is not the first frame, compare it to the previous frame
         if prev_frame is not None:
             # get the slide_path
-            slide_path = f"{output_folder}/slides/slide_batch_{batch_number}_count_{slide_count}.png"
+            slide_path = f"{subdirectory_name}/batch_{batch_number}/slides/slide_batch_{batch_number}_count_{slide_count}.png"
 
             cv2.imwrite(slide_path, current_frame)
             print(f"Slide {slide_count} saved.")
@@ -296,12 +298,16 @@ def save_slides_from_video(batch_number, video_path, frame_interval=300, thresho
             # ocr the slide with pytesseract
             slide_text = ocr_with_pytesseract(slide_path)
 
+            print("prev_slide_text:")
+            print(prev_slide_text)
             # print the slide_text
             print("slide_text:")
             print(slide_text)
 
             # update current_slide_text
-            if slides_are_the_same(slide_text.lower(), prev_slide_text.lower()):
+            if slides_are_the_same(
+                slide_text.lower().strip(), prev_slide_text.lower().strip()
+            ):
                 prev_slide_text = slide_text
                 print("this slide is the same as the previous one!")
                 continue
@@ -317,8 +323,8 @@ def save_slides_from_video(batch_number, video_path, frame_interval=300, thresho
             slide_ms_timestamp_end_prev = ms_timestamp - 100
 
             # save the previous slide
-            slides[f"batch_{batch_number}_count_{slide_count}"] = {
-                "slide_count": slide_count,
+            slides[f"batch_{batch_number}_count_{slide_count-1}"] = {
+                "slide_count": slide_count - 1,
                 "start": slide_ms_timestamp_start,
                 "end": slide_ms_timestamp_end_prev,
             }
@@ -326,14 +332,14 @@ def save_slides_from_video(batch_number, video_path, frame_interval=300, thresho
             # start the next slide
             slide_ms_timestamp_start = ms_timestamp
 
-            # increment the slide count
-            slide_count += 1
-
             # upload the slide to r2
             image_url = upload_file_to_r2(slide_path)
             print("Image URL:", image_url)
 
             image_urls.append(image_url)
+
+            # increment the slide count
+            slide_count += 1
 
         # Update previous frame
         prev_frame = current_frame
@@ -341,8 +347,8 @@ def save_slides_from_video(batch_number, video_path, frame_interval=300, thresho
     # Save the last slide after the loop
     ms_timestamp = cap.get(cv2.CAP_PROP_POS_MSEC)
     slide_ms_timestamp_end_prev = ms_timestamp
-    slides[f"batch_{batch_number}_count_{slide_count}"] = {
-        "slide_count": slide_count,
+    slides[f"batch_{batch_number}_count_{slide_count-1}"] = {
+        "slide_count": slide_count - 1,
         "start": slide_ms_timestamp_start,
         "end": slide_ms_timestamp_end_prev,
     }
@@ -353,7 +359,7 @@ def save_slides_from_video(batch_number, video_path, frame_interval=300, thresho
     return (
         duration_in_milliseconds,
         batch_number,
-        output_folder,
+        subdirectory_name,
         slide_count,
         slides,
         image_urls,
@@ -394,7 +400,7 @@ Here are the sections:
     return extract_markdown(response.choices[0].message.content)
 
 
-def download_file_and_split_into_chunks(video_url):
+def download_file_and_split_into_batchs(video_url):
     from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
     from moviepy.editor import VideoFileClip
     import os
@@ -403,41 +409,46 @@ def download_file_and_split_into_chunks(video_url):
     local_file_path = "temp_file.mp4"
     download_file_from_url(video_url, local_file_path)
 
-    # get file name from public_url
+    # get the file name from the public url
     file_name = video_url.split("/")[-1].split(".")[0]
+
+    # get the subdirectory name
+    subdirectory_name = video_url.split("/")[-2]
 
     # Load the video file
     video = VideoFileClip(local_file_path)
     duration = video.duration  # duration in seconds
 
-    # Split the video into chunks of 5 minutes (300 seconds)
-    chunk_duration = 300
+    # Split the video into batchs of 5 minutes (300 seconds)
+    batch_duration = 300
     start_time = 0
-    chunk_number = 1
+    batch_number = 0
 
     audio_urls = []
 
     while start_time < duration:
-        end_time = min(start_time + chunk_duration, duration)
-        chunk_file_name = f"{file_name}_chunk_{chunk_number}.mp4"
+        end_time = min(start_time + batch_duration, duration)
+        batch_file_name = f"{subdirectory_name}/batch_{batch_number}/{file_name}_batch_{batch_number}.mp4"
+
+        ensure_directory_exists(batch_file_name)
 
         ffmpeg_extract_subclip(
-            local_file_path, start_time, end_time, targetname=chunk_file_name
+            local_file_path, start_time, end_time, targetname=batch_file_name
         )
 
-        # Check if the chunk file exists
-        if not os.path.exists(chunk_file_name):
-            raise FileNotFoundError(f"Chunk file not found: {chunk_file_name}")
+        # Check if the batch file exists
+        if not os.path.exists(batch_file_name):
+            raise FileNotFoundError(f"batch file not found: {batch_file_name}")
 
-        # Upload the chunk to R2
-        audio_url = upload_file_to_r2(chunk_file_name)
+        # Upload the batch to R2
+        audio_url = upload_file_to_r2(batch_file_name)
         audio_urls.append(audio_url)
 
-        # Remove the chunk file after upload to save space
-        os.remove(chunk_file_name)
+        # Remove the batch file after upload to save space
+        os.remove(batch_file_name)
 
-        start_time += chunk_duration
-        chunk_number += 1
+        start_time += batch_duration
+        batch_number += 1
 
     # Remove the original downloaded file to save space
     os.remove(local_file_path)
@@ -457,7 +468,7 @@ def create_video_to_post(video_r2_url):
     import time
 
     # download the video from r2
-    whole_video_url, video_urls = download_file_and_split_into_chunks(video_r2_url)
+    whole_video_url, video_urls = download_file_and_split_into_batchs(video_r2_url)
 
     # # get the youtube video and other assorted metadata
     # video = YoutubeVideo(youtube_url)
@@ -475,7 +486,6 @@ def create_video_to_post(video_r2_url):
     )
 
     all_slide_times = {}
-    all_output_folders = {}
     total_image_urls = []
     sum_video_time = 0
     for j, output in enumerate(
@@ -505,9 +515,6 @@ def create_video_to_post(video_r2_url):
         # merge the slide_times into a big dictionary
         all_slide_times.update(slide_times)
 
-        # merge the output_folders into a big dictionary
-        all_output_folders[batch_number] = output_folder
-
     print("all_slide_times:")
     pprint(all_slide_times, indent=4)
 
@@ -519,13 +526,13 @@ def create_video_to_post(video_r2_url):
     batch_size = 5
     # time it
 
-    # chunk up total_image_urls into batches of 5
+    # batch up total_image_urls into batches of 5
 
     start_time = time.time()
     for x in read_text_from_slides_with_openai_f.map(
         [
             total_image_urls[x : min(x + batch_size, len(total_image_urls))]
-            for x in range(1, len(total_image_urls), batch_size)
+            for x in range(0, len(total_image_urls), batch_size)
         ]
     ):
         slide_text_list.append(x)
@@ -535,12 +542,12 @@ def create_video_to_post(video_r2_url):
 
     slide_text_list = [extract_slide_text(x) for x in slide_text_list if x is not None]
 
-    print("slide_text_list after extracting openai response:")
-    pprint(slide_text_list, indent=4)
-
     # flatten list
 
     slide_text_list = [item for sublist in slide_text_list for item in sublist]
+
+    print("slide_text_list after extracting openai response:")
+    pprint(slide_text_list, indent=4)
 
     # add in the extra metadata
 
@@ -572,8 +579,6 @@ def create_video_to_post(video_r2_url):
 
     print("transcript")
     print(transcript_sentences)
-
-    write_section_f = Function.lookup("video-to-blog-post", "write_section")
 
     # for each slide text, grab the corresponding portion of the transcript, and rewrite it into a section of the blog post
 
@@ -641,14 +646,36 @@ def create_video_to_post(video_r2_url):
 
         # show the edited section
 
+    # output the raw transcript sentences for each slide
+
+    constructed_sections = []
+    # for each slide
+    # get the corresponding transcript sentences
+    for x in slide_text_list:
+        slide_id, slide_text, start, end = x
+
+        batch_number = int(slide_id.split("_")[1])
+
+        slide_url = f"https://pub-f1ee73dd9450494a95fae11b75fb5a42.r2.dev/{output_folder}/batch_{batch_number}/slides/slide_{slide_id}.png"
+
+        raw_transcript_sentences = paragraphs[slide_id]
+
+        constructed_section = f"""![Slide]({slide_url})
+
+{raw_transcript_sentences}"""
+
+        constructed_sections.append(constructed_section)
+
     written_sections = []
 
+    write_section_f = Function.lookup("video-to-blog-post", "write_section")
+
     for section in write_section_f.starmap(
-        [(paragraphs, x, all_output_folders) for x in slide_text_list]
+        [(paragraphs, x, output_folder) for x in slide_text_list]
     ):
         written_sections.append(section)
 
-    return "\n\n".join(written_sections)
+    return "\n\n".join(constructed_sections), "\n\n".join(written_sections)
 
 
 def main():
