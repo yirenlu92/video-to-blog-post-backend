@@ -28,8 +28,6 @@ def transcribe_with_assembly(
 
     transcript = transcriber.transcribe(audio_url, config)
 
-    id = transcript.id
+    sentences = transcript.get_sentences()
 
-    sentences = get_sentences_timestamps_from_transcript(id)
-
-    return sentences["sentences"]
+    return sentences

@@ -606,7 +606,7 @@ def create_video_to_post(video_r2_url):
             slide_sentences = [
                 sentence
                 for sentence in transcript_sentences
-                if sentence["end"] <= next_slide_start + 2000
+                if sentence.end <= next_slide_start + 2000
             ]
 
             # pprint(slide_sentences, indent=4)
@@ -619,8 +619,8 @@ def create_video_to_post(video_r2_url):
             slide_sentences = [
                 sentence
                 for sentence in transcript_sentences
-                if sentence["start"] >= start - 10000
-                and sentence["end"] <= next_slide_start + 2000
+                if sentence.start >= start - 10000
+                and sentence.end <= next_slide_start + 2000
             ]
 
             # pprint(slide_sentences, indent=4)
@@ -628,14 +628,14 @@ def create_video_to_post(video_r2_url):
             slide_sentences = [
                 sentence
                 for sentence in transcript_sentences
-                if sentence["start"] >= start - 10000 and sentence["end"] <= end + 2000
+                if sentence.start >= start - 10000 and sentence.end <= end + 2000
             ]
 
             # pprint(slide_sentences, indent=4)
 
         # combine the sentences into a single paragraph
 
-        paragraph = " ".join([sentence["text"] for sentence in slide_sentences])
+        paragraph = " ".join([sentence.text for sentence in slide_sentences])
         paragraphs[slide_id] = paragraph
 
         print(f"slide {slide_id}:")
@@ -675,7 +675,7 @@ def create_video_to_post(video_r2_url):
     ):
         written_sections.append(section)
 
-    return "\n\n".join(constructed_sections), "\n\n".join(written_sections)
+    return "\n\n".join(written_sections)
 
 
 def main():
