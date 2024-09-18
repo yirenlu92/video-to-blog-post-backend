@@ -199,21 +199,39 @@ Output the following, in <blog_post_section> tags, in Markdown:
 
 1. The subheading (H2, sentence case).
 2. The slide image in markdown format.
-4. The lightly edited transcript text, in Markdown format
+3. raw transcript section, in markdown
+4. polished transcript section, in markdown
 
 Remember to maintain the original speaking style while improving readability and clarity. Your goal is to create a polished, engaging, and informative blog post section that accurately represents the content of the talk.
 """
 
     try:
         message = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o-2024-08-06",
             max_tokens=5000,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant."},
                 {"role": "user", "content": prompt},
             ],
         )
-
+        response_format={
+            "type": "json_schema",
+            "json_schema": {
+                "name": "polished_ver",
+                "schema": {
+                    "type": "object",
+                    "properties": {
+                        "subheading": {"type": "string"},
+                        "slide_image": {"type": "string"},
+                        "raw_transcript_section_markdown": {"type": "string"},
+                        "polished_transcript_section_markdown": {"type": "string"}
+                        },
+                    "required": ["slide_image"],
+                    "additionalProperties": False
+                },
+                "strict": True
+            }
+        }
         print(message.choices[0].message.content)
         return extract_blog_post_section(message.choices[0].message.content)
     except Exception as e:
