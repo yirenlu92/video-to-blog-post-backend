@@ -7,7 +7,6 @@ from .helper import (
     ocr_with_pytesseract,
     slides_are_the_same,
     ensure_directory_exists,
-    extract_blog_post_section,
     extract_markdown,
     extract_slide_text,
     remove_duplicates_preserve_order,
@@ -157,6 +156,15 @@ Remember to maintain ordering of the images in your analysis (ascending by batch
 @app.function(timeout=6000, secrets=[Secret.from_name("video-to-tutorial-keys")])
 def write_section(paragraphs, slide_text_list_elem, subdirectory_name):
     from openai import OpenAI
+    from textwrap import dedent
+
+    from pydantic import BaseModel
+
+    class OneSlideSection(BaseModel):
+        subheading: str
+        slide_image: str
+        raw_transcript_section: str
+        polished_transcript_section: str
 
     slide_id, slide_text, start, end = slide_text_list_elem
 
@@ -167,11 +175,13 @@ def write_section(paragraphs, slide_text_list_elem, subdirectory_name):
 
     client = OpenAI()
 
-    prompt = f"""You are a technical writing expert tasked with converting a portion of a conference talk transcript into a section of a technical blog post. You will be provided with the following information:
+    prompt = f"""You are a technical writing expert tasked with converting a portion of a conference talk transcript into a section of a technical blog post. 
+    
+You will be provided with the following information:
 
 1. A public URL of an image (slide from the talk)
 2. OCR'ed text corresponding to the image
-3. The corresponding portion of the talk transcript
+3. The corresponding section of the talk transcript
 
 Here are the inputs:
 
@@ -187,7 +197,9 @@ Here are the inputs:
 {paragraphs[slide_id]}
 </transcript>
 
-Your task is to lightly edit the transcript for clarity while preserving the first-person voice and converting it into a segment of a technical blog post. Follow these guidelines:
+Your task is to lightly edit the transcript for clarity while preserving the first-person voice and converting it into a segment of a technical blog post, and then output it along with some other artifacts following the schema provided.
+
+Follow these guidelines:
 
 1. Create writing that is down-to-earth and not pedantic or overly expository.
 2. Remember that this is only one section of the blog post, so it doesn't need an introduction or conclusion. Avoid phrases like "In this section, " and "To summarize." In general, don't say that you are going to say the thing, just say the thing.
@@ -195,48 +207,57 @@ Your task is to lightly edit the transcript for clarity while preserving the fir
 4. Use the slide title as the subheading for the section, in H2 format and sentence case.
 5. Incorporate information from the slide text, including verbatim text when appropriate (lists, diagrams, code samples, or images).
 
-Output the following, in <blog_post_section> tags, in Markdown:
 
-1. The subheading (H2, sentence case).
-2. The slide image in markdown format.
-3. raw transcript section, in markdown
-4. polished transcript section, in markdown
+Here is a description of the parameters, along with examples of the format you should we using inside the <example> tags:
+
+- subheading: The title of the slide, adapted from the first line of the slide_text, in H2, in markdown format and sentence case (so with ## at the beginning). 
+    <example>
+    ## This is a subheading
+    </example>
+- slide_image: The URL of the slide image, in markdown format
+    <example>
+    ![Slide](https://path-to-slide-image.png)
+    </example>
+- raw transcript section: The original transcript text, in markdown format
+    <example>
+    Transcript text here
+    </example>
+- polished transcript section: The polished/edited transcript text, in markdown format
+    <example>
+    Polished transcript text here
+    </example>
+
 
 Remember to maintain the original speaking style while improving readability and clarity. Your goal is to create a polished, engaging, and informative blog post section that accurately represents the content of the talk.
 """
 
     try:
-        message = client.chat.completions.create(
+        message = client.beta.chat.completions.parse(
             model="gpt-4o-2024-08-06",
-            max_tokens=5000,
+            temperature=0.2,
             messages=[
-                {"role": "system", "content": "You are a helpful assistant."},
-                {"role": "user", "content": prompt},
+                {"role": "system", "content": dedent(prompt)},
             ],
+            response_format=OneSlideSection,
         )
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
-                "name": "polished_ver",
-                "schema": {
-                    "type": "object",
-                    "properties": {
-                        "subheading": {"type": "string"},
-                        "slide_image": {"type": "string"},
-                        "raw_transcript_section_markdown": {"type": "string"},
-                        "polished_transcript_section_markdown": {"type": "string"}
-                        },
-                    "required": ["slide_image"],
-                    "additionalProperties": False
-                },
-                "strict": True
-            }
-        }
-        print(message.choices[0].message.content)
-        return extract_blog_post_section(message.choices[0].message.content)
+
+        # combine each of the fields values into a single string
+        structured_response = message.choices[0].message.parsed
+
     except Exception as e:
         print(f"Error in OpenAI API: {e}")
         return f"Error in OpenAI API: {e}"
+
+    markdown_section = "\n\n".join(
+        [
+            structured_response.subheading,
+            structured_response.slide_image,
+            structured_response.raw_transcript_section,
+            structured_response.polished_transcript_section,
+        ]
+    )
+
+    return markdown_section
 
 
 @app.function(
@@ -691,6 +712,7 @@ def create_video_to_post(video_r2_url):
     for section in write_section_f.starmap(
         [(paragraphs, x, output_folder) for x in slide_text_list]
     ):
+        section
         written_sections.append(section)
 
     return "\n\n".join(written_sections)
