@@ -76,17 +76,14 @@ def remove_duplicates_preserve_order(input_list):
     result = []
 
     prev_item = ""
-    for index, full_item in enumerate(input_list):
-        print("full_item: ", full_item)
-        (i, item, start, end) = full_item
-
-        if slides_are_the_same(item.lower(), prev_item.lower()):
+    for index, slide_obj in enumerate(input_list):
+        if slides_are_the_same(slide_obj["slide_text"].lower(), prev_item.lower()):
             print("this slide is the same as the previous one!")
-            prev_item = item
+            prev_item = slide_obj["slide_text"]
             continue
 
-        result.append(full_item)
-        prev_item = item
+        result.append(slide_obj)
+        prev_item = slide_obj["slide_text"]
     return result
 
 

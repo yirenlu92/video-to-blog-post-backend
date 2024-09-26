@@ -8,7 +8,6 @@ from .helper import (
     slides_are_the_same,
     ensure_directory_exists,
     extract_markdown,
-    extract_slide_text,
     remove_duplicates_preserve_order,
 )
 
@@ -53,14 +52,13 @@ def read_text_from_slides_with_openai(image_urls):
     print("image_urls to ocr:", image_urls)
 
     from openai import OpenAI
-    from textwrap import dedent
     from pydantic import BaseModel
 
     class SlideTextSection(BaseModel):
         slide_id: str
         slide_title: str
-        slide_bullet: str
         slide_text: str
+        slide_diagram: str
 
     image_text_prompt = """
 You are an AI assistant tasked with analyzing a series of images containing presentation slides. Your job is to extract and structure the text from these slides, as well as render any diagrams present. Follow these instructions carefully for each image:
@@ -78,25 +76,22 @@ For each image, provided with its image_id please do the following:
 Here is a description of the parameters, along with examples of the format you should we using inside the <slide_text_example> tags:
 
 - slide_id: the slide id
-    <slide_text_example>
-    put slide id here. slide id should always present
-    </slide_text_example>
+    <example>
+    put slide id here. the slide id should always be present
+    </example>
 - slide_title: The title of the slide 
-    <slide_text_example>
-    ## This is a title
-    </slide_text_example>
-- slide_bullet: slide bullet points, ignore this section if there is no bullet points
-    <slide_text_example>
+    <example>
+    This is a slide
+    </example>
+- slide_text_info: orc'ed slide text, ignore this section of there is no slide text. Please format it nicely in the format that it shows up on the slide.
+    <example>
     • Bullet point 1
     • Bullet point 2
        - Sub-bullet point A
        - Sub-bullet point B
     • Bullet point 3
-    </slide_text_example>
-- slide_text_info: orc'ed slide text, ignore this section of there is no slide text 
-    <slide_text_example>
-    put slide text here
-    </slide_text_example>
+    </example>
+- slide_diagram: ocr'ed diagram in ascii form, empty if there is no diagram
 
 Remember to maintain ordering of the images in your analysis (ascending by batch/count number, so batch_0_count_0, batch_0_count_1, batch_1_count_0, batch_1_count_1, etc.) and to include all relevant information from each slide.
     """
@@ -136,21 +131,19 @@ Remember to maintain ordering of the images in your analysis (ascending by batch
     try:
         message = client.beta.chat.completions.parse(
             model="gpt-4o-2024-08-06",
-            max_tokens=2000, 
+            max_tokens=2000,
             messages=messages,
-            response_format=SlideTextSection
+            response_format=SlideTextSection,
         )
         structured_response = message.choices[0].message.parsed
-    
+
     except Exception as e:
         print(f"Error in OpenAI API: {e}")
         return f"Error in OpenAI API: {e}"
 
-    slide_text_section = "<image_analysis id=\"" + structured_response.slide_id + "\"><slide_text>" + structured_response.slide_title + structured_response.slide_bullet + structured_response.slide_text + "</slide_text></image_analysis>"
-    
-    print(slide_text_section) 
+    # turn structured_response into json
 
-    return slide_text_section
+    return structured_response.json()
 
 
 @app.function(timeout=6000, secrets=[Secret.from_name("video-to-tutorial-keys")])
@@ -560,8 +553,8 @@ def create_video_to_post(video_r2_url):
         all_slide_times.update(slide_times)
 
     print("all_slide_times:")
-    if (verbose_level >= 1): 
-       pprint(all_slide_times, indent=4)
+    if verbose_level >= 1:
+        pprint(all_slide_times, indent=4)
 
     read_text_from_slides_with_openai_f = Function.lookup(
         "video-to-blog-post", "read_text_from_slides_with_openai"
@@ -579,56 +572,33 @@ def create_video_to_post(video_r2_url):
             for x in range(0, len(total_image_urls), batch_size)
         ]
     ):
-        #print(x)
+        # print(x)
         slide_text_list.append(x)
-    
+
     end_time = time.time()
 
     print(f"Time taken with .map: {end_time - start_time}")
 
-    if (verbose_level >= 1): 
-        print(slide_text_list)
-
-    slide_text_list = [extract_slide_text(x) for x in slide_text_list if x is not None]
-
-    # flatten list
-
-    slide_text_list = [item for sublist in slide_text_list for item in sublist]
-
-    print("slide_text_list after extracting openai response:")
-    if (verbose_level >= 1): 
-       pprint(slide_text_list, indent=4)
-
-    # add in the extra metadata
-
-    new_slide_text_list = []
-    for pair in slide_text_list:
-        slide_id, slide_text = pair
-
-        try:
-            new_slide_text_list.append(
-                (
-                    slide_id,
-                    slide_text,
-                    all_slide_times[slide_id]["start"],
-                    all_slide_times[slide_id]["end"],
-                )
-            )
-        except KeyError:
-            print(f"KeyError: {slide_id}")
-            continue
-
-    # check the first line of each extracted text and dedupe based on that
-    slide_text_list = remove_duplicates_preserve_order(new_slide_text_list)
+    # remove any remaining duplicate slides
+    slide_text_list = remove_duplicates_preserve_order(slide_text_list)
 
     print("slide_text_listi after remove duplicate")
-    if (verbose_level >= 1): 
+    if verbose_level >= 1:
         pprint(slide_text_list, indent=4)
+
+    # add in the metadata
+    for i, slide_obj in enumerate(slide_text_list):
+        try:
+            slide_obj["start"] = all_slide_times[slide_obj["slide_id"]]["start"]
+            slide_obj["end"] = all_slide_times[slide_obj["slide_id"]]["end"]
+        except KeyError:
+            print(f"KeyError: {slide_obj['slide_id']}")
+            continue
 
     # # transcribe the video
     transcript_sentences = transcribe_with_assembly(audio_url=whole_video_url)
 
-    if (verbose_level >= 2): 
+    if verbose_level >= 2:
         print(transcript_sentences)
 
     # for each slide text, grab the corresponding portion of the transcript, and rewrite it into a section of the blog post
@@ -679,7 +649,8 @@ def create_video_to_post(video_r2_url):
             slide_sentences = [
                 sentence
                 for sentence in transcript_sentences
-                if sentence.start >= start - head_time and sentence.end <= end + tail_time
+                if sentence.start >= start - head_time
+                and sentence.end <= end + tail_time
             ]
 
             # pprint(slide_sentences, indent=4)
@@ -690,7 +661,7 @@ def create_video_to_post(video_r2_url):
         paragraphs[slide_id] = paragraph
 
         print(f"slide {slide_id}:")
-        if (verbose_level >= 2): 
+        if verbose_level >= 2:
             print(paragraph)
 
         # show the embedded slide
