@@ -8,7 +8,6 @@ from .helper import (
     slides_are_the_same,
     ensure_directory_exists,
     extract_markdown,
-    extract_slide_text,
     remove_duplicates_preserve_order,
 )
 
@@ -579,11 +578,17 @@ def create_video_to_post(video_r2_url):
 
     print(f"Time taken with .map: {end_time - start_time}")
 
-    slide_text_list = [extract_slide_text(x) for x in slide_text_list if x is not None]
+    slide_text_list = [
+        (slide.slide_title, slide.slide_text, slide.diagram)
+        for slide in slide_text_list
+        if slide.slide_text != ""
+    ]
+
+    # slide_text_list = [extract_slide_text(x) for x in slide_text_list if x is not None]
 
     # flatten list
 
-    slide_text_list = [item for sublist in slide_text_list for item in sublist]
+    # slide_text_list = [item for sublist in slide_text_list for item in sublist]
 
     print("slide_text_list after extracting openai response:")
     pprint(slide_text_list, indent=4)
@@ -591,8 +596,8 @@ def create_video_to_post(video_r2_url):
     # add in the extra metadata
 
     new_slide_text_list = []
-    for pair in slide_text_list:
-        slide_id, slide_text = pair
+    for trio in slide_text_list:
+        slide_id, slide_text, slide_diagram = trio
 
         try:
             new_slide_text_list.append(
