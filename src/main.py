@@ -579,7 +579,7 @@ def create_video_to_post(video_r2_url):
     print(f"Time taken with .map: {end_time - start_time}")
 
     slide_text_list = [
-        (slide.slide_title, slide.slide_text, slide.diagram)
+        (slide.image_id, slide.slide_title, slide.slide_text, slide.diagram)
         for slide in slide_text_list
         if slide.slide_text != ""
     ]
@@ -597,13 +597,14 @@ def create_video_to_post(video_r2_url):
 
     new_slide_text_list = []
     for trio in slide_text_list:
-        slide_id, slide_text, slide_diagram = trio
+        image_id, slide_id, slide_text, slide_diagram = trio
 
         try:
             new_slide_text_list.append(
                 (
                     slide_id,
                     slide_text,
+                    slide_diagram,
                     all_slide_times[slide_id]["start"],
                     all_slide_times[slide_id]["end"],
                 )
