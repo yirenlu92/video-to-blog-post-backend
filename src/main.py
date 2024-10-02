@@ -14,8 +14,6 @@ from .helper import (
 from .r2_utils import upload_file_to_r2, download_file_from_url
 from .assemblyai_utils import transcribe_with_assembly
 
-# extensive debug output
-verbose_level = 0
 
 image = (
     Image.debian_slim()
@@ -70,7 +68,7 @@ For each image, provided with its image_id please do the following:
 
 1. Perform Optical Character Recognition (OCR) on the text in the slide portion of the image. Ignore any text in other sections of the image, such as titles or parts showing the speaker.
 
-2. Structure the OCR'ed text to resemble its appearance on the slide as closely as possible. Present this text within slide_bullet area.
+2. Structure the OCR'ed text to resemble its appearance on the slide as closely as possible. Present this text within <slide_text> tags.
 
 3. If the slide contains any diagrams, render them as best you can in ascii art. Include any labels or annotations present in the diagram.
 
@@ -250,9 +248,7 @@ Remember to maintain the original speaking style while improving readability and
         [
             structured_response.subheading,
             structured_response.slide_image,
-            "Raw transcript",
             structured_response.raw_transcript_section,
-            "Polished transcript",
             structured_response.polished_transcript_section,
         ]
     )
@@ -573,6 +569,7 @@ def create_video_to_post(video_r2_url):
     # time it
 
     # batch up total_image_urls into batches of 5
+
     start_time = time.time()
     for x in read_text_from_slides_with_openai_f.map(
         [
@@ -652,7 +649,7 @@ def create_video_to_post(video_r2_url):
             slide_sentences = [
                 sentence
                 for sentence in transcript_sentences
-                if sentence.end <= next_slide_start + tail_time
+                if sentence.end <= next_slide_start + 2000
             ]
 
             # pprint(slide_sentences, indent=4)
@@ -663,8 +660,8 @@ def create_video_to_post(video_r2_url):
             slide_sentences = [
                 sentence
                 for sentence in transcript_sentences
-                if sentence.start >= start - head_time
-                and sentence.end <= next_slide_start + tail_time
+                if sentence.start >= start - 10000
+                and sentence.end <= next_slide_start + 2000
             ]
 
         else:
