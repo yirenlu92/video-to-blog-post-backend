@@ -28,6 +28,10 @@ def transcribe_with_assembly(
 
     transcript = transcriber.transcribe(audio_url, config)
 
-    sentences = transcript.get_sentences()
+    try:
+        sentences = transcript.get_sentences()
+    except:
+        print("There is no audio")
+        raise Exception("There is no audio in the video")
 
     return sentences

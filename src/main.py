@@ -60,6 +60,9 @@ def read_text_from_slides_with_openai(image_urls):
         slide_text: str
         slide_diagram: str
 
+    class ListOfSlideTextSections(BaseModel):
+        slide_text_sections: list[SlideTextSection]
+
     image_text_prompt = """
 You are an AI assistant tasked with analyzing a series of images containing presentation slides. Your job is to extract and structure the text from these slides, as well as render any diagrams present. Follow these instructions carefully for each image:
 
@@ -71,9 +74,9 @@ For each image, provided with its image_id please do the following:
 
 3. If the slide contains any diagrams, render them as best you can in ascii art. Include any labels or annotations present in the diagram.
 
-4. Output the results for each slide along with the image_id. Format your output as follows:
+4. Output the results for each slide along with the image_id. Format your output as per the schema given, which is a list of formatted slide text sections.
 
-Here is a description of the parameters, along with examples of the format you should we using inside the <slide_text_example> tags:
+Here is a description of the parameters, along with examples of the format you should be using inside the <example> tags:
 
 - slide_id: the slide id
     <example>
@@ -95,8 +98,6 @@ Here is a description of the parameters, along with examples of the format you s
 
 Remember to maintain ordering of the images in your analysis (ascending by batch/count number, so batch_0_count_0, batch_0_count_1, batch_1_count_0, batch_1_count_1, etc.) and to include all relevant information from each slide.
     """
-
-    slide_text_section = []
 
     client = OpenAI()
 
@@ -133,7 +134,7 @@ Remember to maintain ordering of the images in your analysis (ascending by batch
             model="gpt-4o-2024-08-06",
             max_tokens=2000,
             messages=messages,
-            response_format=SlideTextSection,
+            response_format=ListOfSlideTextSections,
         )
         structured_response = message.choices[0].message.parsed
 
@@ -142,8 +143,9 @@ Remember to maintain ordering of the images in your analysis (ascending by batch
         return f"Error in OpenAI API: {e}"
 
     # turn structured_response into json
+    json_response = structured_response.json()
 
-    return structured_response.json()
+    return json_response["slide_text_sections"]
 
 
 @app.function(timeout=6000, secrets=[Secret.from_name("video-to-tutorial-keys")])
@@ -159,7 +161,10 @@ def write_section(paragraphs, slide_text_list_elem, subdirectory_name):
         raw_transcript_section: str
         polished_transcript_section: str
 
-    slide_id, slide_text, start, end = slide_text_list_elem
+    slide_id = slide_text_list_elem["slide_id"]
+    slide_text = slide_text_list_elem["slide_text"]
+
+    slide_text_list_elem
 
     # extract the batch_number from the slide_id
     batch_number = int(slide_id.split("_")[1])
@@ -500,9 +505,12 @@ def download_file_and_split_into_batchs(video_url):
 )
 def create_video_to_post(video_r2_url):
     import time
+    import json
 
     head_time = 5000
     tail_time = 2000
+
+    print("video_r2_url:", video_r2_url)
 
     # download the video from r2
     whole_video_url, video_urls = download_file_and_split_into_batchs(video_r2_url)
@@ -552,8 +560,8 @@ def create_video_to_post(video_r2_url):
         # merge the slide_times into a big dictionary
         all_slide_times.update(slide_times)
 
-    print("all_slide_times:")
     if verbose_level >= 1:
+        print("all_slide_times:")
         pprint(all_slide_times, indent=4)
 
     read_text_from_slides_with_openai_f = Function.lookup(
@@ -570,20 +578,32 @@ def create_video_to_post(video_r2_url):
         [
             total_image_urls[x : min(x + batch_size, len(total_image_urls))]
             for x in range(0, len(total_image_urls), batch_size)
-        ]
+        ],
+        return_exceptions=True,
     ):
-        # print(x)
-        slide_text_list.append(x)
+        if isinstance(x, Exception):
+            print(f"Exception: {x}")
+            continue
+
+        slide_text_list.extend(x)
 
     end_time = time.time()
 
     print(f"Time taken with .map: {end_time - start_time}")
 
+    # slide_text_list is currently a list of lists
+    # flatten the list of lists and turn the entires into dicts
+    slide_text_list = [json.loads(x) for x in slide_text_list]
+
+    print("slide_text_list:")
+
+    pprint(slide_text_list, indent=4)
+
     # remove any remaining duplicate slides
     slide_text_list = remove_duplicates_preserve_order(slide_text_list)
 
-    print("slide_text_listi after remove duplicate")
     if verbose_level >= 1:
+        print("slide_text_listi after remove duplicate")
         pprint(slide_text_list, indent=4)
 
     # add in the metadata
@@ -595,8 +615,14 @@ def create_video_to_post(video_r2_url):
             print(f"KeyError: {slide_obj['slide_id']}")
             continue
 
+    # pretty print the slide_text_list
+    pprint(slide_text_list, indent=4)
+
     # # transcribe the video
-    transcript_sentences = transcribe_with_assembly(audio_url=whole_video_url)
+    try:
+        transcript_sentences = transcribe_with_assembly(audio_url=whole_video_url)
+    except Exception as e:
+        raise e
 
     if verbose_level >= 2:
         print(transcript_sentences)
@@ -610,20 +636,19 @@ def create_video_to_post(video_r2_url):
     paragraphs = {}
 
     for i, slide in enumerate(slide_text_list):
-        slide_id, slide_text, start, end = slide
-
         # print slide_id, slide_text, start, end
+        slide_id = slide["slide_id"]
+        start = slide["start"]
+        end = slide["end"]
 
-        print(f"slide {slide_id}:")
-        print(slide_text)
+        # print(f"slide {slide['slide_id']}:")
+        # print(slide["slide_text"])
 
-        print(f"start: {start}, end: {end}")
+        # print(f"start: {slide['start']}, end: {slide['end']}")
 
         # if it's the first slide, then get the sentences that fall between the very beginning and the end of the slide
         if i == 0:
-            next_slide_number, next_slide_text, next_slide_start, next_slide_end = (
-                slide_text_list[i + 1]
-            )
+            next_slide_start = slide_text_list[i + 1]["start"]
             slide_sentences = [
                 sentence
                 for sentence in transcript_sentences
@@ -632,9 +657,7 @@ def create_video_to_post(video_r2_url):
 
             # pprint(slide_sentences, indent=4)
         elif i + 1 < len(slide_text_list):
-            next_slide_number, next_slide_text, next_slide_start, next_slide_end = (
-                slide_text_list[i + 1]
-            )
+            next_slide_start = slide_text_list[i + 1]["start"]
 
             # get the sentences that fall between the start and end of the slides
             slide_sentences = [
@@ -644,7 +667,6 @@ def create_video_to_post(video_r2_url):
                 and sentence.end <= next_slide_start + tail_time
             ]
 
-            # pprint(slide_sentences, indent=4)
         else:
             slide_sentences = [
                 sentence
@@ -652,8 +674,6 @@ def create_video_to_post(video_r2_url):
                 if sentence.start >= start - head_time
                 and sentence.end <= end + tail_time
             ]
-
-            # pprint(slide_sentences, indent=4)
 
         # combine the sentences into a single paragraph
 
@@ -671,23 +691,21 @@ def create_video_to_post(video_r2_url):
 
     # output the raw transcript sentences for each slide
 
-    constructed_sections = []
-    # for each slide
-    # get the corresponding transcript sentences
-    for x in slide_text_list:
-        slide_id, slide_text, start, end = x
+    #     constructed_sections = []
+    #     for x in slide_text_list:
+    #         slide_id, slide_text, start, end = x
 
-        batch_number = int(slide_id.split("_")[1])
+    #         batch_number = int(slide_id.split("_")[1])
 
-        slide_url = f"https://pub-f1ee73dd9450494a95fae11b75fb5a42.r2.dev/{output_folder}/batch_{batch_number}/slides/slide_{slide_id}.png"
+    #         slide_url = f"https://pub-f1ee73dd9450494a95fae11b75fb5a42.r2.dev/{output_folder}/batch_{batch_number}/slides/slide_{slide_id}.png"
 
-        raw_transcript_sentences = paragraphs[slide_id]
+    #         raw_transcript_sentences = paragraphs[slide_id]
 
-        constructed_section = f"""![Slide]({slide_url})
+    #         constructed_section = f"""![Slide]({slide_url})
 
-{raw_transcript_sentences}"""
+    # {raw_transcript_sentences}"""
 
-        constructed_sections.append(constructed_section)
+    #         constructed_sections.append(constructed_section)
 
     written_sections = []
 
@@ -696,7 +714,6 @@ def create_video_to_post(video_r2_url):
     for section in write_section_f.starmap(
         [(paragraphs, x, output_folder) for x in slide_text_list]
     ):
-        section
         written_sections.append(section)
 
     return "\n\n".join(written_sections)

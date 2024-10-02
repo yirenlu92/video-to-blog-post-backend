@@ -112,3 +112,4 @@ def download_file_from_url(url, save_path):
         print(f"File downloaded successfully to {save_path}")
     else:
         print(f"Failed to download file. Status code: {response.status_code}")
+        raise Exception(f"Failed to download file. Status code: {response.status_code}")

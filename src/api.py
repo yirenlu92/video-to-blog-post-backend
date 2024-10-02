@@ -58,9 +58,9 @@ def accept_create_video_to_post_job(video: UploadFile = File(...)):
 async def poll_results(call_id: str):
     function_call = FunctionCall.from_id(call_id)
     try:
-        # return as { "result": { "markdown": function_call.get(timeout=0)} }
         result = function_call.get(timeout=0)
-        print("result:", result)
         return {"markdown": result}
     except TimeoutError:
         return JSONResponse({"status": "processing"}, status_code=202)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
